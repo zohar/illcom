@@ -1,0 +1,5 @@
+#setting file
+*settings.php
+
+# files dir
+sites/*/files
