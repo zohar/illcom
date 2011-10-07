@@ -1,5 +1,4 @@
 <?php
-// $Id: i18ntaxonomy.admin.inc,v 1.1.2.9 2009/04/27 16:50:49 jareyero Exp $
 
 /**
  * @file
@@ -33,7 +32,7 @@ function i18ntaxonomy_page_vocabulary($vocabulary, $op = NULL, $tid = NULL) {
  */
 function i18ntaxonomy_translation_term_form($form_state, $vid, $trid = NULL, $edit = array()) {
   $languages = i18n_supported_languages();
-  
+
   if ($trid == 'new') {
     $translations = array();
     $form['trid'] = array(

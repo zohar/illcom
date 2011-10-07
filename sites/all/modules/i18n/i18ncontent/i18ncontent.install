@@ -1,5 +1,4 @@
 <?php
-// $Id: i18ncontent.install,v 1.1.2.14 2009/01/21 18:35:45 jareyero Exp $
 
 /**
  * @file
@@ -63,5 +62,5 @@ function i18ncontent_update_6002() {
     drupal_set_message('The i18ncontent update 6002 needs to run after i18nstrings update 6003. Re-run update.php.', 'warning');
     $ret['#abort'] = TRUE;
   }
-  return $ret; 
+  return $ret;
 }
