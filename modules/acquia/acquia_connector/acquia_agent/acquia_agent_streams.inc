@@ -1,5 +1,4 @@
 <?php
-// $Id: acquia_agent_streams.inc,v 1.4 2009/06/16 20:47:10 pwolanin Exp $
 
 /**
  * @file

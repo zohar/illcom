@@ -1,5 +1,4 @@
 <?php
-// $Id: acquia_agent.install,v 1.4 2009/03/23 16:12:57 pwolanin Exp $
 
 /**
  * The minimum PHP memory recommended to install Acquia Drupal.

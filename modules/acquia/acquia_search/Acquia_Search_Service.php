@@ -1,5 +1,6 @@
 <?php
-// $Id: Acquia_Search_Service.php 5064 2009-07-17 21:52:23Z buildbot $
+// $Id: Acquia_Search_Service.php 5565 2011-05-31 22:54:47Z peter.wolanin $
+
 include_once './' . drupal_get_path('module', 'apachesolr') . '/Drupal_Apache_Solr_Service.php';
 include_once './' . drupal_get_path('module', 'acquia_agent') . '/acquia_agent_streams.inc';
 
@@ -15,7 +16,10 @@ class Acquia_Search_Service extends Drupal_Apache_Solr_Service {
     if (!stristr($url,'?')) {
       $url .= "?";
     }
-    $url .= '&request_id=' . $id;
+    else {
+      $url .= "&";
+    }
+    $url .= 'request_id=' . $id;
     return $id;
   }
   /**
@@ -80,6 +84,70 @@ class Acquia_Search_Service extends Drupal_Apache_Solr_Service {
         $message .= $response->getRawResponse();
       }
       throw new Exception('"' . $code . '" Status: ' . $message);
+    }
+    return $response;
+  }
+
+  /**
+   * Make a request to a servlet (a path) that's not a standard path.
+   *
+   * @param string $servlet
+   *   A path to be added to the base Solr path. e.g. 'extract/tika'
+   *
+   * @param array $params
+   *   Any request parameters when constructing the URL.
+   *
+   * @param string $method
+   *   'GET', 'POST', 'PUT', or 'HEAD'.
+   *
+   * @param array $request_headers
+   *   Keyed array of header names and values.  Should include 'Content-Type'
+   *   for POST or PUT.
+   *
+   * @param string $rawPost
+   *   Must be an empty string unless method is POST or PUT.
+   *
+   * @param float $timeout
+   *   Read timeout in seconds or FALSE.
+   *
+   * @return 
+   *  Apache_Solr_Response object
+   */
+  public function makeServletRequest($servlet, $params = array(), $method = 'GET', $request_headers = array(), $rawPost = '', $timeout = FALSE) {
+    if ($method == 'GET' || $method == 'HEAD') {
+      // Make sure we are not sending a request body.
+      $rawPost = '';
+    }
+    // Add default params.
+    $params += array(
+      'wt' => self::SOLR_WRITER,
+    );
+
+    $url = $this->_constructUrl($servlet, $params);
+    $id = $this->add_request_id($url);
+    // We assume we only authenticate the URL for other servlets.
+    list($cookie, $nonce) = acquia_search_auth_cookie($url);
+    if (empty($cookie)) {
+      throw new Exception('Invalid authentication string - subscription keys expired or missing.');
+    }
+    $request_headers += array(
+      'Cookie' => $cookie,
+      'User-Agent' => 'acquia_search/'. ACQUIA_SEARCH_VERSION,
+    );
+    list ($data, $headers) = $this->_makeHttpRequest($url, $method, $request_headers, $rawPost, $timeout);
+    $response = new Apache_Solr_Response($data, $headers, $this->_createDocuments, $this->_collapseSingleValueArrays);
+    $hmac = acquia_search_extract_hmac($headers);
+    $code = (int) $response->getHttpStatus();
+    if ($code != 200) {
+      $message = $response->getHttpStatusMessage();
+      if ($code >= 400 && $code != 403 && $code != 404) {
+        // Add details, like Solr's exception message.
+        $message .= $response->getRawResponse();
+      }
+      throw new Exception('"' . $code . '" Status: ' . $message);
+    }
+    elseif (!acquia_search_valid_response($hmac, $nonce, $data)) {
+      throw new Exception('Authentication of search content failed url: '. $url);
     }
     return $response;
   }

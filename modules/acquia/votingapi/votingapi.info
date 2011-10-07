@@ -3,9 +3,13 @@ name = Voting API
 description = Provides a shared voting API for other modules.
 package = Voting
 core = 6.x
-; Information added by Acquia.com packaging script
-version = "6.x-2.2"
+; Information added by drupal.org packaging script on 2009-08-15
+version = "6.x-2.3"
 core = "6.x"
 project = "votingapi"
+datestamp = "1250359559"
+
+
+; Information added by Acquia.com packaging script
 acquia = "1"
 

@@ -1,5 +1,4 @@
 <?php
-// $Id: imagecache.module,v 1.100 2009/04/14 00:01:21 drewish Exp $
 
 /**
  * @file
@@ -70,7 +69,7 @@ function imagecache_menu() {
   // standard imagecache callback.
   $items[file_directory_path() .'/imagecache'] = array(
     'page callback' => 'imagecache_cache',
-    'access callback' => TRUE,
+    'access callback' => '_imagecache_menu_access_public_files',
     'type' => MENU_CALLBACK
   );
   // private downloads imagecache callback
@@ -84,11 +83,38 @@ function imagecache_menu() {
 }
 
 /**
+ * Menu access callback for public file transfers.
+ */
+function _imagecache_menu_access_public_files() {
+  return (FILE_DOWNLOADS_PUBLIC == variable_get('file_downloads', FILE_DOWNLOADS_PUBLIC));
+}
+
+/**
+ * Implementation of hook_form_FORM_ID_alter.
+ *
  * Clear imagecache presets cache on admin/build/modules form.
  */
 function imagecache_form_system_modules_alter(&$form, $form_state) {
   imagecache_presets(TRUE);
 }
+
+/**
+ * Implementation of hook_form_FORM_ID_alter.
+ *
+ * The file system form is modified to include an extra submit handler, so
+ * that imagecache can rebuild the menu after the filesystem path is changed.
+ */
+function imagecache_form_system_file_system_settings_alter(&$form, &$form_state) {
+  $form['#submit'][] = 'imagecache_system_file_system_submit';
+}
+
+/**
+ * Rebuild menus to ensure we've got the right files directory callback.
+ */
+function imagecache_system_file_system_submit($form, &$form_state) {
+  menu_rebuild();
+}
+
 
 /**
  * Implementation of hook_theme().
@@ -111,6 +137,7 @@ function imagecache_theme() {
         'attributes' => array(),
     )),
     'imagecache_resize' => array(
+      'file' => 'imagecache_actions.inc',
       'arguments' => array('element' => NULL),
     ),
     'imagecache_scale' => array(
@@ -146,23 +173,23 @@ function imagecache_theme() {
   foreach (imagecache_presets() as $preset) {
     $theme['imagecache_formatter_'. $preset['presetname'] .'_default'] = array(
       'arguments' => array('element' => NULL),
-      'function' => 'theme_imagecache_formatter',
+      'function' => 'theme_imagecache_formatter_default',
     );
     $theme['imagecache_formatter_'. $preset['presetname'] .'_linked'] = array(
       'arguments' => array('element' => NULL),
-      'function' => 'theme_imagecache_formatter',
+      'function' => 'theme_imagecache_formatter_linked',
     );
     $theme['imagecache_formatter_'. $preset['presetname'] .'_imagelink'] = array(
       'arguments' => array('element' => NULL),
-      'function' => 'theme_imagecache_formatter',
+      'function' => 'theme_imagecache_formatter_imagelink',
     );
     $theme['imagecache_formatter_'. $preset['presetname'] .'_path'] = array(
       'arguments' => array('element' => NULL),
-      'function' => 'theme_imagecache_formatter',
+      'function' => 'theme_imagecache_formatter_path',
     );
     $theme['imagecache_formatter_'. $preset['presetname'] .'_url'] = array(
       'arguments' => array('element' => NULL),
-      'function' => 'theme_imagecache_formatter',
+      'function' => 'theme_imagecache_formatter_url',
     );
   }
 
@@ -189,6 +216,7 @@ function imagecache_imagecache_actions() {
     'imagecache_resize' => array(
       'name' => 'Resize',
       'description' => 'Resize an image to an exact set of dimensions, ignoring aspect ratio.',
+      'file' => 'imagecache_actions.inc',
     ),
     'imagecache_scale' => array(
       'name' => 'Scale',
@@ -202,7 +230,7 @@ function imagecache_imagecache_actions() {
     ),
     'imagecache_scale_and_crop' => array(
       'name' => 'Scale And Crop',
-      'description' => 'Resize an image to an exact set of dimensions, ignoring aspect ratio.',
+      'description' => 'Resize an image while maintaining aspect ratio, then crop it to the specified dimensions.',
       'file' => 'imagecache_actions.inc',
     ),
     'imagecache_crop' => array(
@@ -287,35 +315,56 @@ function imagecache_action_definition($action) {
 }
 
 /**
- * Return a URL that points to the location of a derivative of the
- * original image transformed with the given preset.
+ * Return a URL that points to the location of a derivative of the original
+ * image transformed with the given preset.
  *
  * Special care is taken to make this work with the possible combinations of
  * Clean URLs and public/private downloads. For example, when Clean URLs are not
  * available an URL with query should be returned, like
- * http://example.com/?q=files/imagecache/foo.jpg, so that imagecache is able
+ * http://example.com/?q=files/imagecache/foo.jpg, so that ImageCache is able
  * intercept the request for this file.
  *
- * This code is very similar to the Drupal core function file_create_url(), but
+ * This code began similarly to Drupal core's function file_create_url(), but
  * handles the case of Clean URLs and public downloads differently however.
+ * It also implements hook_file_url_alter() which was added to Drupal 7 and
+ * backported to PressFlow 6.x.
  *
  * @param $presetname
+ *   String specifying an ImageCache preset name.
  * @param $filepath
  *   String specifying the path to the image file.
  * @param $bypass_browser_cache
  *   A Boolean indicating that the URL for the image should be distinct so that
  *   the visitors browser will not be able to use a previously cached version.
- *   This is
+ *   Defaults to FALSE.
+ * @param $absolute
+ *   A Boolean indicating that the URL should be absolute. Defaults to TRUE.
  */
-function imagecache_create_url($presetname, $filepath, $bypass_browser_cache = FALSE) {
-  $path = _imagecache_strip_file_directory($filepath);
-  $args = array('absolute' => TRUE, 'query' => $bypass_browser_cache ? time() : $bypass_browser_cache);
-  switch (variable_get('file_downloads', FILE_DOWNLOADS_PUBLIC)) {
-    case FILE_DOWNLOADS_PUBLIC:
-      return url($GLOBALS['base_url'] . '/' . file_directory_path() .'/imagecache/'. $presetname .'/'. $path, $args);
-    case FILE_DOWNLOADS_PRIVATE:
-      return url('system/files/imagecache/'. $presetname .'/'. $path, $args);
+function imagecache_create_url($presetname, $filepath, $bypass_browser_cache = FALSE, $absolute = TRUE) {
+  $args = array('query' => empty($bypass_browser_cache) ? NULL : time());
+  $file_directory = file_directory_path();
+
+  // Determine the path of the derivative inside the files directory.
+  $derivative_path = 'imagecache/'. $presetname .'/'. _imagecache_strip_file_directory($filepath);
+
+  // Then construct a full path and see if anyone wants to alter it.
+  $altered_path = $old_path = $file_directory .'/'. $derivative_path;
+  drupal_alter('file_url', $altered_path);
+
+  // If any module has altered the path, then return the alteration...
+  if ($altered_path != $old_path) {
+    // ...but use url() so our $bypass_browser_cache parameter is honored.
+    return url($altered_path, $args);
   }
+
+  // It was unchanged so use the download method's prefix.
+  $prefix = array(
+    FILE_DOWNLOADS_PUBLIC => $file_directory,
+    FILE_DOWNLOADS_PRIVATE => 'system/files',
+  );
+  $path = $prefix[variable_get('file_downloads', FILE_DOWNLOADS_PUBLIC)] .'/'. $derivative_path;
+
+  return url($path, $args + array('absolute' => $absolute));
 }
 
 /**
@@ -359,7 +408,7 @@ function imagecache_cache_private() {
   $preset = check_plain(array_shift($args));
   $source = implode('/', $args);
 
-  if (user_access('view imagecache '. $preset)) {
+  if (user_access('view imagecache '. $preset) && !in_array(-1, module_invoke_all('file_download', $source))) {
     _imagecache_cache($preset, $source);
   }
   else {
@@ -375,7 +424,10 @@ function imagecache_cache_private() {
 }
 
 /**
- * handle request validation and responses to imagecache requests.
+ * Handle request validation and responses to ImageCache requests.
+ *
+ * @see imagecache_generate_image() if you're writing code that needs to have
+ *   ImageCache generate images but not send them to a browser.
  */
 function _imagecache_cache($presetname, $path) {
   if (!$preset = imagecache_preset_by_name($presetname)) {
@@ -394,15 +446,17 @@ function _imagecache_cache($presetname, $path) {
   // preserve path for watchdog.
   $src = $path;
 
-  // check if the path to the file exists
+  // Check if the path to the file exists.
   if (!is_file($src) && !is_file($src = file_create_path($src))) {
-    // Send a 404 if we don't know of a preset.
+    watchdog('imagecache', '404: Unable to find %image ', array('%image' => $src), WATCHDOG_ERROR);
     header("HTTP/1.0 404 Not Found");
     exit;
   };
 
-  // bail if the requested file isn't an image you can't just summon .php files etc...
+  // Bail if the requested file isn't an image you can't request .php files
+  // etc...
   if (!getimagesize($src)) {
+    watchdog('imagecache', '403: File is not an image %image ', array('%image' => $src), WATCHDOG_ERROR);
     header('HTTP/1.0 403 Forbidden');
     exit;
   }
@@ -441,7 +495,7 @@ function _imagecache_cache($presetname, $path) {
  * @return
  *   Boolean, TRUE indicating success and FALSE failure.
  */
-function _imagecache_apply_action($action, $image) {
+function _imagecache_apply_action($action, &$image) {
   $actions = imagecache_action_definitions();
 
   if ($definition = imagecache_action_definition($action['action'])) {
@@ -456,9 +510,14 @@ function _imagecache_apply_action($action, $image) {
 }
 
 /**
- * helper function to transfer files from imagecache. Determines mime type and sets a last modified header.
- * @param $path path to file to be transferred.
- * @return <exit>
+ * Helper function to transfer files from imagecache.
+ *
+ * Determines MIME type and sets a last modified header.
+ *
+ * @param $path
+ *   String containing the path to file to be transferred.
+ * @return
+ *   This function does not return. It calls exit().
  */
 
 function imagecache_transfer($path) {
@@ -467,6 +526,8 @@ function imagecache_transfer($path) {
 
   if ($fileinfo = stat($path)) {
     $headers[] = 'Content-Length: '. $fileinfo[7];
+    $headers[] = 'Expires: ' . gmdate('D, d M Y H:i:s', time() + 1209600) .' GMT';
+    $headers[] = 'Cache-Control: max-age=1209600, private, must-revalidate';
     _imagecache_cache_set_cache_headers($fileinfo, $headers);
   }
   file_transfer($path, $headers);
@@ -475,7 +536,18 @@ function imagecache_transfer($path) {
 
 /**
  * Set file headers that handle "If-Modified-Since" correctly for the
- * given fileinfo. Most code has been taken from drupal_page_cache_header().
+ * given fileinfo.
+ *
+ * Note that this function may return or may call exit().
+ *
+ * Most code has been taken from drupal_page_cache_header().
+ *
+ * @param $fileinfo
+ *   Array returned by stat().
+ * @param
+ *   Array of existing headers.
+ * @return
+ *   Nothing but beware that this function may not return.
  */
 function _imagecache_cache_set_cache_headers($fileinfo, &$headers) {
   // Set default values:
@@ -509,13 +581,17 @@ function _imagecache_cache_set_cache_headers($fileinfo, &$headers) {
 }
 
 /**
- * build an image cache derivative
+ * Create a new image based on an image preset.
  *
- * @param $actions  Array of imagecache actions.
- * @param $src      Path of the source file.
- * @param $dst      Path of the destination file.
- * @param $tmp      Path of the temporary file used for manipulating the image.
- * @return TRUE - derivative generated, FALSE - no derivative generated, NULL - derivative being generated
+ * @param $preset
+ *   An image preset array.
+ * @param $source
+ *   Path of the source file.
+ * @param $destination
+ *   Path of the destination file.
+ * @return
+ *   TRUE if an image derivative is generated, FALSE if no image
+ *  derivative is generated. NULL if the derivative is being generated.
  */
 function imagecache_build_derivative($actions, $src, $dst) {
   // get the folder for the final location of this preset...
@@ -527,6 +603,14 @@ function imagecache_build_derivative($actions, $src, $dst) {
     return FALSE;
   }
 
+  // file_check_directory() has an annoying habit of displaying "directory ...
+  // has been created" status messages. To avoid confusing visitors we clear
+  // out all the status messages for non-ImageCache admins. This might affect
+  // some other messages but errors and warnings should still be displayed.
+  if (!user_access('administer imagecache')) {
+    drupal_get_messages('status', TRUE);
+  }
+
   // Simply copy the file if there are no actions.
   if (empty($actions)) {
     return file_copy($src, $dst, FILE_EXISTS_REPLACE);
@@ -536,17 +620,25 @@ function imagecache_build_derivative($actions, $src, $dst) {
     return FALSE;
   }
 
+  if (file_exists($dst)) {
+    watchdog('imagecache', 'Cached image file %dst already exists but is being regenerated. There may be an issue with your rewrite configuration.', array('%dst' => $dst), WATCHDOG_WARNING);
+  }
+
   foreach ($actions as $action) {
     if (!empty($action['data'])) {
-      // QuickSketch, why do these run first/twice? - dopry.
+      // Make sure the width and height are computed first so they can be used
+      // in relative x/yoffsets like 'center' or 'bottom'.
       if (isset($action['data']['width'])) {
-        $width = _imagecache_filter('width', $action['data']['width'], $image->info['width'], $image->info['height']);
+        $action['data']['width']   = _imagecache_percent_filter($action['data']['width'], $image->info['width']);
       }
       if (isset($action['data']['height'])) {
-        $height = _imagecache_filter('height', $action['data']['height'], $image->info['width'], $image->info['height']);
+        $action['data']['height']  = _imagecache_percent_filter($action['data']['height'], $image->info['height']);
       }
-      foreach ($action['data'] as $key => $value) {
-        $action['data'][$key] = _imagecache_filter($key, $value, $image->info['width'], $image->info['height'], $width, $height);
+      if (isset($action['data']['xoffset'])) {
+        $action['data']['xoffset'] = _imagecache_keyword_filter($action['data']['xoffset'], $image->info['width'], $action['data']['width']);
+      }
+      if (isset($action['data']['yoffset'])) {
+        $action['data']['yoffset'] = _imagecache_keyword_filter($action['data']['yoffset'], $image->info['height'], $action['data']['height']);
       }
     }
     if (!_imagecache_apply_action($action, $image)) {
@@ -556,9 +648,7 @@ function imagecache_build_derivative($actions, $src, $dst) {
   }
 
   if (!imageapi_image_close($image, $dst)) {
-    if (file_exists($dst)) {
-      watchdog('imagecache', 'Cached image file %dst already exists. There may be an issue with your rewrite configuration.', array('%dst' => $dst), WATCHDOG_ERROR);
-    }
+    watchdog('imagecache', 'There was an error saving the new image file %dst.', array('%dst' => $dst), WATCHDOG_ERROR);
     return FALSE;
   }
 
@@ -576,18 +666,12 @@ function imagecache_user($op, &$edit, &$account, $category = NULL) {
 }
 
 /**
- * Implementation of hook_imagefield_file().
+ * Implementation of filefield.module's hook_file_delete().
+ *
+ * Remove derivative images after the originals are deleted by filefield.
  */
-function imagecache_imagefield_file($op, $file) {
-  switch ($op) {
-    // Delete imagecache presets when imagecache images are deleted.
-    case 'delete': imagecache_image_flush($file['filepath']); break;
-
-    // Create imagecache derivatives when files are saved.
-    case 'save':
-      break;
-  }
-
+function imagecache_file_delete($file) {
+  imagecache_image_flush($file->filepath);
 }
 
 /**
@@ -628,79 +712,87 @@ function imagecache_field_formatter_info() {
   return $formatters;
 }
 
-function theme_imagecache_formatter($element) {
-  if (isset($element['#item']['nid']) && $node = node_load($element['#item']['nid'])) {
-    return imagecache_field_formatter($element['#field_name'], $element['#item'], $element['#formatter'], $node);
+function theme_imagecache_formatter_default($element) {
+  // Inside a view $element may contain NULL data. In that case, just return.
+  if (empty($element['#item']['fid'])) {
+    return '';
   }
+
+  // Extract the preset name from the formatter name.
+  $presetname = substr($element['#formatter'], 0, strrpos($element['#formatter'], '_'));
+  $style = 'linked';
+  $style = 'default';
+
+  $item = $element['#item'];
+  $item['data']['alt'] = isset($item['data']['alt']) ? $item['data']['alt'] : '';
+  $item['data']['title'] = isset($item['data']['title']) ? $item['data']['title'] : NULL;
+
+  $class = "imagecache imagecache-$presetname imagecache-$style imagecache-{$element['#formatter']}";
+  return theme('imagecache', $presetname, $item['filepath'], $item['data']['alt'], $item['data']['title'], array('class' => $class));
 }
 
-
-/**
- * Implementation of hook_field_formatter().
- */
-function imagecache_field_formatter($field, $item, $formatter, $node) {
-  if (empty($item['fid']) && $field['use_default_image']) {
-    $item = $field['default_image'];
+function theme_imagecache_formatter_linked($element) {
+  // Inside a view $element may contain NULL data. In that case, just return.
+  if (empty($element['#item']['fid'])) {
+    return '';
   }
-  // Views does not load the file for us, while CCK display fields does.
-  if (empty($item['filepath'])) {
-    $item = array_merge($item, field_file_load($item['fid']));
-  }
-  if (is_string($item['data'])) {
-    $item['data'] = unserialize($item['data']);
-  }
-  $alt = empty($item['data']['alt']) ? '' : $item['data']['alt'];
-  $title = empty($item['data']['title']) ? '' : $item['data']['title'];
-  $parts =  explode('_', $formatter);
-  $style = array_pop($parts);
-  $presetname = implode('_', $parts);
 
-  $class = "imagecache imagecache-$presetname imagecache-$style imagecache-$formatter";
-  if ($preset = imagecache_preset_by_name($presetname)) {
-    $item['filepath'] = $item['fid'] == 'upload' ? $item['preview'] : $item['filepath'];
-    switch ($style) {
-      case 'linked':
-        $imagetag = theme('imagecache', $presetname, $item['filepath'], $alt, $title);
-        return l($imagetag, 'node/'. $node->nid, array('attributes' => array('class' => $class), 'html' => TRUE));
+  // Extract the preset name from the formatter name.
+  $presetname = substr($element['#formatter'], 0, strrpos($element['#formatter'], '_'));
+  $style = 'linked';
 
-      case 'imagelink':
-        $original_image_url = file_create_url($item['filepath']);
-        $imagetag =  theme('imagecache', $presetname, $item['filepath'], $alt, $title);
-        return l($imagetag, $original_image_url, array('attributes' => array('class' => $class), 'html' => TRUE));
+  $item = $element['#item'];
+  $item['data']['alt'] = isset($item['data']['alt']) ? $item['data']['alt'] : '';
+  $item['data']['title'] = isset($item['data']['title']) ? $item['data']['title'] : NULL;
 
-      case 'url':
-        return imagecache_create_url($presetname, $item['filepath']);
-
-      case 'path':
-        return imagecache_create_path($presetname, $item['filepath']);
-
-      default:
-        return theme('imagecache', $presetname, $item['filepath'], $alt, $title, array('class' => $class));
-    }
-  }
-  return '<!-- imagecache formatter preset('. $presetname .') not found! -->';
+  $imagetag = theme('imagecache', $presetname, $item['filepath'], $item['data']['alt'], $item['data']['title']);
+  $path = empty($item['nid']) ? '' : 'node/'. $item['nid'];
+  $class = "imagecache imagecache-$presetname imagecache-$style imagecache-{$element['#formatter']}";
+  return l($imagetag, $path, array('attributes' => array('class' => $class), 'html' => TRUE));
 }
 
-/**
- * Filter key word values such as 'top', 'right', 'center', and also percentages.
- * All returned values are in pixels relative to the passed in height and width.
- */
-function _imagecache_filter($key, $value, $current_width, $current_height, $new_width = NULL, $new_height = NULL) {
-  switch ($key) {
-    case 'width':
-      $value = _imagecache_percent_filter($value, $current_width);
-      break;
-    case 'height':
-      $value = _imagecache_percent_filter($value, $current_height);
-      break;
-    case 'xoffset':
-      $value = _imagecache_keyword_filter($value, $current_width, $new_width);
-      break;
-    case 'yoffset':
-      $value = _imagecache_keyword_filter($value, $current_height, $new_height);
-      break;
+function theme_imagecache_formatter_imagelink($element) {
+  // Inside a view $element may contain NULL data. In that case, just return.
+  if (empty($element['#item']['fid'])) {
+    return '';
   }
-  return $value;
+
+  // Extract the preset name from the formatter name.
+  $presetname = substr($element['#formatter'], 0, strrpos($element['#formatter'], '_'));
+  $style = 'imagelink';
+
+  $item = $element['#item'];
+  $item['data']['alt'] = isset($item['data']['alt']) ? $item['data']['alt'] : '';
+  $item['data']['title'] = isset($item['data']['title']) ? $item['data']['title'] : NULL;
+
+  $imagetag = theme('imagecache', $presetname, $item['filepath'], $item['data']['alt'], $item['data']['title']);
+  $path = file_create_url($item['filepath']);
+  $class = "imagecache imagecache-$presetname imagecache-$style imagecache-{$element['#formatter']}";
+  return l($imagetag, $path, array('attributes' => array('class' => $class), 'html' => TRUE));
+}
+
+function theme_imagecache_formatter_path($element) {
+  // Inside a view $element may contain NULL data. In that case, just return.
+  if (empty($element['#item']['fid'])) {
+    return '';
+  }
+
+  // Extract the preset name from the formatter name.
+  $presetname = substr($element['#formatter'], 0, strrpos($element['#formatter'], '_'));
+
+  return imagecache_create_path($presetname, $element['#item']['filepath']);
+}
+
+function theme_imagecache_formatter_url($element) {
+  // Inside a view $element may contain NULL data. In that case, just return.
+  if (empty($element['#item']['fid'])) {
+    return '';
+  }
+
+  // Extract the preset name from the formatter name.
+  $presetname = substr($element['#formatter'], 0, strrpos($element['#formatter'], '_'));
+
+  return imagecache_create_url($presetname, $element['#item']['filepath']);
 }
 
 /**
@@ -766,73 +858,87 @@ function _imagecache_recursive_delete($path) {
 /**
  * Create and image tag for an imagecache derivative
  *
- * @param $namespace
- *   presetname of the derivative you wish to generate a tag for.
+ * @param $presetname
+ *   String with the name of the preset used to generate the derivative image.
  * @param $path
- *   path to the original image you wish to create a derivative image tag for.
+ *   String path to the original image you wish to create a derivative image
+ *   tag for.
  * @param $alt
- *   img tag alternate text
+ *   Optional string with alternate text for the img element.
  * @param $title
- *   img tag title text
- * @param attributes
- *   optional drupal attributes array. If attributes is set, the default imagecache classes
- *   will not be set automatically, you must do this manually.
+ *   Optional string with title for the img element.
+ * @param $attributes
+ *   Optional drupal_attributes() array. If $attributes is an array then the
+ *   default imagecache classes will not be set automatically, you must do this
+ *   manually.
+ * @param $getsize
+ *   If set to TRUE, the image's dimension are fetched and added as width/height
+ *   attributes.
+ * @param $absolute
+ *   A Boolean indicating that the URL should be absolute. Defaults to TRUE.
+ * @return
+ *   HTML img element string.
  */
-function theme_imagecache($namespace, $path, $alt = '', $title = '', $attributes = NULL) {
-  if ($image = image_get_info(imagecache_create_path($namespace, $path))) {
+function theme_imagecache($presetname, $path, $alt = '', $title = '', $attributes = NULL, $getsize = TRUE, $absolute = TRUE) {
+  // Check is_null() so people can intentionally pass an empty array of
+  // to override the defaults completely.
+  if (is_null($attributes)) {
+    $attributes = array('class' => 'imagecache imagecache-'. $presetname);
+  }
+  if ($getsize && ($image = image_get_info(imagecache_create_path($presetname, $path)))) {
     $attributes['width'] = $image['width'];
     $attributes['height'] = $image['height'];
   }
-  // check is_null so people can intentionally pass an empty array of attributes to override
-  // the defaults completely... if
-  if (is_null($attributes)) {
-    $attributes['class'] = 'imagecache imagecache-'. $namespace;
-  }
+
   $attributes = drupal_attributes($attributes);
-  $imagecache_url = imagecache_create_url($namespace, $path);
+  $imagecache_url = imagecache_create_url($presetname, $path, FALSE, $absolute);
   return '<img src="'. $imagecache_url .'" alt="'. check_plain($alt) .'" title="'. check_plain($title) .'" '. $attributes .' />';
 }
 
-function theme_imagecache_imagelink($namespace, $path, $alt = '', $title = '', $attributes = NULL) {
-  $image = theme('imagecache', $namespace, $path, $alt, $title);
-  $original_image_url = file_create_url($path);
-  return l($image, $original_image_url, array('absolute' => FALSE, 'html' => TRUE));
-}
-
-
-/************************************************************************************
- * ImageCache action implementation example in module.
+/**
+ * Create a link the original image that wraps the derivative image.
+ *
+ * @param $presetname
+ *   String with the name of the preset used to generate the derivative image.
+ * @param $path
+ *   String path to the original image you wish to create a derivative image
+ *   tag for.
+ * @param $alt
+ *   Optional string with alternate text for the img element.
+ * @param $title
+ *   Optional string with title for the img element.
+ * @param attributes
+ *   Optional drupal_attributes() array for the link.
+ * @return
+ *   An HTML string.
  */
-function imagecache_resize_image(&$image, $data) {
-  if (!imageapi_image_resize($image, $data['width'], $data['height'])) {
-    watchdog('imagecache', 'imagecache_resize_image failed. image: %image, data: %data.', array('%path' => $image, '%data' => print_r($data, TRUE)), WATCHDOG_ERROR);
-    return FALSE;
+function theme_imagecache_imagelink($presetname, $path, $alt = '', $title = '', $attributes = NULL) {
+  $image = theme('imagecache', $presetname, $path, $alt, $title);
+  $original_image_url = file_create_url($path);
+  return l($image, $original_image_url, array('absolute' => FALSE, 'html' => TRUE, 'attributes' => $attributes));
+}
+
+/**
+ * Imagecache JS settings and theme function.
+ */
+function imagecache_add_js() {
+  static $added;
+  if (!$added) {
+    $added = TRUE;
+    drupal_add_js(drupal_get_path('module', 'imagecache') .'/imagecache.js');
+
+    $mode = variable_get('file_downloads', FILE_DOWNLOADS_PUBLIC);
+    if ($mode == FILE_DOWNLOADS_PUBLIC) {
+      $settings['filesUrl'] = $GLOBALS['base_path'] . file_directory_path();
+    }
+    elseif ($mode == FILE_DOWNLOADS_PRIVATE) {
+      $settings['filesUrl'] = 'system/files';
+    }
+    $settings['filesDirectory'] = file_directory_path();
+    $settings['presets'] = array_keys(imagecache_presets());
+    drupal_add_js(array('imagecache' => $settings), 'setting');
   }
-  return TRUE;
 }
-
-function imagecache_resize_form($action) {
-  $form['width'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Width'),
-    '#default_value' => isset($action['width']) ? $action['width'] : '100%',
-    '#description' => t('Enter a width in pixels or as a percentage. i.e. 500 or 80%.'),
-  );
-  $form['height'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Height'),
-    '#default_value' => isset($action['height']) ? $action['height'] : '100%',
-    '#description' => t('Enter a height in pixels or as a percentage. i.e. 500 or 80%.'),
-  );
-  return $form;
-}
-
-function theme_imagecache_resize($element) {
-  $data = $element['#value'];
-  return 'width: '. $data['width'] .', height: '. $data['height'];
-}
-
-
 
 /**
  *  ImageCache 2.x API
@@ -978,7 +1084,7 @@ function imagecache_preset_save($preset) {
 }
 
 function imagecache_preset_delete($preset) {
-  imagecache_preset_flush($preset['presetid']);
+  imagecache_preset_flush($preset);
   db_query('DELETE FROM {imagecache_action} where presetid = %d', $preset['presetid']);
   db_query('DELETE FROM {imagecache_preset} where presetid = %d', $preset['presetid']);
   imagecache_presets(TRUE);
@@ -1001,13 +1107,15 @@ function imagecache_preset_actions($preset, $reset = FALSE) {
 
 /**
  * Flush cached media for a preset.
- * @param id
- *   A preset id.
+ *
+ * @param preset
+ *   an imagecache preset array.
  */
 function imagecache_preset_flush($preset) {
   if (user_access('flush imagecache')) {
     $presetdir = realpath(file_directory_path() .'/imagecache/'. $preset['presetname']);
     if (is_dir($presetdir)) {
+      module_invoke_all('imagecache_preset_flush', $presetdir, $preset);
       _imagecache_recursive_delete($presetdir);
     }
   }
@@ -1020,7 +1128,9 @@ function imagecache_preset_flush($preset) {
  */
 function imagecache_image_flush($path) {
   foreach (imagecache_presets() as $preset) {
-    file_delete(imagecache_create_path($preset['presetname'], $path));
+    $derivative_path = imagecache_create_path($preset['presetname'], $path);
+    module_invoke_all('imagecache_image_flush', $derivative_path, $preset, $path);
+    file_delete($derivative_path);
   }
 }
 
@@ -1051,6 +1161,11 @@ function imagecache_action_save($action) {
   $definition = imagecache_action_definition($action['action']);
   $action = array_merge($definition, $action);
 
+  // Some actions don't have data. Make an empty one to prevent SQL errors.
+  if (!isset($action['data'])) {
+    $action['data'] = array();
+  }
+
   if (!empty($action['actionid'])) {
     drupal_write_record('imagecache_action', $action, 'actionid');
   }
@@ -1069,3 +1184,177 @@ function imagecache_action_delete($action) {
   imagecache_preset_flush($preset);
   imagecache_presets(TRUE);
 }
+
+/**
+ * Implementation of hook_action_info().
+ *
+ * Note: These are actions in the Drupal core trigger.module sense, not
+ * ImageCache actions.
+ */
+function imagecache_action_info() {
+  $actions = array();
+
+  if (module_exists('filefield')) {
+    $actions['imagecache_flush_action'] = array(
+      'type' => 'node',
+      'description' => t("ImageCache: Flush ALL presets for this node's filefield images"),
+      'configurable' => FALSE,
+      'hooks' => array(
+        'nodeapi' => array('presave', 'delete', 'insert', 'update'),
+      )
+    );
+    $actions['imagecache_generate_all_action'] = array(
+      'type' => 'node',
+      'description' => t("ImageCache: Generate ALL presets for this node's filefield images"),
+      'configurable' => FALSE,
+      'hooks' => array(
+        'nodeapi' => array('presave', 'insert', 'update'),
+      )
+    );
+    $actions['imagecache_generate_action'] = array(
+      'type' => 'node',
+      'description' => t("ImageCache: Generate configured preset(s) for this node's filefield images"),
+      'configurable' => TRUE,
+      'hooks' => array(
+        'nodeapi' => array('presave', 'insert', 'update'),
+      )
+    );
+  }
+
+  return $actions;
+}
+
+/**
+ * Flush all imagecache presets for a given node.
+ *
+ * @param $node
+ *   A node object.
+ * @param $context
+ *   Contains values from the calling action.
+ *
+ * @see imagecache_action_info()
+ */
+function imagecache_flush_action(&$node, $context) {
+  $files = imagecache_get_images_in_node($node);
+  if (!empty($files)) {
+    foreach ($files as $file) {
+      imagecache_image_flush($file['filepath']);
+    }
+  }
+}
+
+/**
+ * Generate all imagecache presets for the given node.
+ *
+ * @param $node
+ *   A node object.
+ * @param $context
+ *   Contains values from the calling action.
+ *
+ * @see imagecache_action_info()
+ */
+function imagecache_generate_all_action(&$node, $context) {
+  $files = imagecache_get_images_in_node($node);
+  $presets = imagecache_presets();
+  if (!empty($files) && !empty($presets)) {
+    foreach ($files as $file) {
+      foreach ($presets as $presetname) {
+        imagecache_generate_image($presetname['presetname'], $file['filepath']);
+      }
+    }
+  }
+}
+
+/**
+ * Generate imagecache presets for the given node and presets.
+ *
+ * @param $node
+ *   A node object.
+ * @param $context
+ *   Contains values from the calling action.
+ *
+ * @see imagecache_action_info()
+ * @see imagecache_generate_action_form()
+ */
+function imagecache_generate_action(&$node, $context) {
+  $files = imagecache_get_images_in_node($node);
+  if (!empty($files) && !empty($context['imagecache_presets'])) {
+    foreach ($files as $file) {
+      foreach ($context['imagecache_presets'] as $presetname) {
+        imagecache_generate_image($presetname, $file['filepath']);
+      }
+    }
+  }
+}
+
+/**
+ * Form for configuring the generate action.
+ *
+ * @see imagecache_generate_action()
+ */
+function imagecache_generate_action_form($context) {
+  $options = array();
+  foreach (imagecache_presets() as $preset) {
+    $options[$preset['presetname']] = $preset['presetname'];
+  }
+  $form['presets'] = array(
+    '#type' => 'checkboxes',
+    '#options' => $options,
+    '#description' => t('Select which imagecache presets will be effected'),
+    '#required' => TRUE,
+    '#default_value' => isset($context['imagecache_presets']) ? $context['imagecache_presets'] : array(),
+  );
+  // Filter out false checkboxes: http://drupal.org/node/61760#comment-402631
+  $form['array_filter'] = array('#type' => 'value', '#value' => TRUE);
+  return $form;
+}
+
+/**
+ * Generate a derivative image given presetname and filepath.
+ *
+ * This is a developer friendly version of _imagecache_cache(), it doesn't worry
+ * about sending HTTP headers or an image back to the client so it's much
+ * simpler.
+ *
+ * @param $presetname
+ *   ImageCache preset array.
+ * @param $filepath
+ *   String filepath from the files table.
+ * @return
+ *   A Boolean indicating if the operation succeeded.
+ */
+function imagecache_generate_image($presetname, $filepath) {
+  $preset = imagecache_preset_by_name($presetname);
+  if (empty($preset['presetname'])) {
+    return FALSE;
+  }
+  $destination = imagecache_create_path($preset['presetname'], $filepath);
+  if (file_exists($destination)) {
+    return TRUE;
+  }
+  return imagecache_build_derivative($preset['actions'], $filepath, $destination);
+}
+
+/**
+ * Given a node, get all images associated with it.
+ *
+ * Currently this only works with images stored in filefields.
+ *
+ * @param $node
+ *   Node object.
+ * @return
+ *   An array of info from the files table.
+ */
+function imagecache_get_images_in_node(&$node) {
+  $files = array();
+  if (module_exists('filefield')) {
+    $data = filefield_get_node_files($node);
+    foreach ($data as $key => $value) {
+      if (stristr($value['filemime'], 'image')) {
+        $files[$key] = $value;
+      }
+    }
+  }
+  return $files;
+}
+

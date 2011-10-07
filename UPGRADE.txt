@@ -1,5 +1,3 @@
-// $Id: UPGRADE.txt,v 1.12 2008/01/04 16:15:58 goba Exp $
-
 
 *************************** IMPORTANT ****************************************
 
@@ -8,18 +6,19 @@ NOTE FOR ACQUIA DRUPAL USERS
 
 Installation and upgrade instructions for this Acquia Drupal distribution
 can be found in the Getting Started Guide available at 
-http://acquia.com/downloads. The rest of this file contains the standard
-Drupal installation instructions available in the core Drupal distribution.
+http://network.acquia.com/documentation/. The rest of this file contains the
+standard Drupal installation instructions available with Drupal core.
 You should use the Getting Started Guide instead of the instructions in this
 file to install this Acquia Drupal distribution.
 
-You can also obtain comprehensive technical support and documentation,
-for this Acquia Drupal distribution through an Acquia Drupal Subscription,
-available at http://acquia.com/network.
+You can also obtain comprehensive technical support for this or any
+Drupal distribution through an Acquia Network subscription. More information
+available at http://acquia.com/drupal-support
 
-More details about the Acquia Network are available at http://acquia.com.
+More about Acquia Network at http://acquia.com/products-services/acquia-network
 
 ******************************************************************************
+
 
 
 UPGRADING
@@ -36,12 +35,10 @@ Prior to upgrading, you should ensure that:
 
 Let's begin!
 
-1.  Backup your database and Drupal directory - especially your "sites"
-    directory which contains your configuration file and added modules and
-    themes, any contributed or custom modules in your "modules" directory,
-    and your "files" directory which contains uploaded files. If other files
-    have modifications, such as .htaccess or robots.txt, those should be
-    backed up as well.
+1.  Back up your Drupal database and site root directory. Be especially sure 
+    to back up your "sites" directory which contains your configuration file, 
+    added modules and themes, and your site's uploaded files. If other files 
+    have modifications, such as .htaccess or robots.txt, back those up as well.
 
     Note: for a single site setup, the configuration file is the "settings.php"
     file located at sites/default/settings.php. The default.settings.php file
