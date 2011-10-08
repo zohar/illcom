@@ -30,6 +30,7 @@
 
 	  	<div id="content">
 			  <?php if ($title): print '<h1>'. $title .'</h1>'; endif; ?>
+			  <?php if ($is_front) print '<div id="above_content">' . $above_content . '</div>'; ?>
 			  <?php print $content ?>
         <span class="clear"></span>
         <?php print $feed_icons ?>

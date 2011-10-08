@@ -209,3 +209,6 @@ li.leaf, li.collapsed, li.expanded {
 .messages {border: 1px solid; padding: 1em}
 .status{color: green}
 .error{color: red}
+
+/* Fix the featured slideshow text */
+.slide-info {width: 500px; left:20px; text-align: left;}
