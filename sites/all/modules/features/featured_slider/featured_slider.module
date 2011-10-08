@@ -1,0 +1,59 @@
+<?php
+include_once('featured_slider.features.inc');
+
+function featured_slider_theme($existing) {
+	return array(
+    'views_view__featured_slide__block_1' => array (
+      'arguments' => array('view' => NULL),
+      'template' => 'views-view--featured-slide--block-1',
+      'original hook' => 'views_view',
+      'path' => drupal_get_path('module', 'featured_slider'),
+			'preprocess functions' => array(
+        'template_preprocess',
+        'template_preprocess_views_view',
+        'featured_slider_preprocess_views_view__featured_slide__block',
+      ),
+    ),
+    'views_view__featured_slide__block_2' => array (
+      'arguments' => array('view' => NULL),
+      'template' => 'views-view--featured-slide--block-2',
+      'original hook' => 'views_view',
+      'path' => drupal_get_path('module', 'featured_slider'),
+      'preprocess functions' => array(
+        'template_preprocess',
+        'template_preprocess_views_view',
+        'featured_slider_preprocess_views_view__featured_slide__block',
+      ),
+    ),
+  );
+}
+
+function featured_slider_preprocess_views_view__featured_slide__block(&$vars) {
+	drupal_add_js(drupal_get_path('module', 'featured_slider') . '/js/jquery.anythingslider.min.js');
+	drupal_add_js(drupal_get_path('module', 'featured_slider') . '/js/featured_slider.js');
+	drupal_add_css(drupal_get_path('module', 'featured_slider') . '/css/anythingslider.css');
+
+	//dpm($vars);
+	$rows = array();
+	foreach ($vars['view']->result as $slide_node) {
+		$node = node_load($slide_node->nid);
+		//dpm($node);
+		$type = isset($node->field_slide_img[0]['fid']) ? 'image' : 'video';
+		//dpm($type);
+		$link_href = (isset($node->field_slide_link[0]['url'])) ?  $node->field_slide_link[0]['url'] : '';
+		$link_title = (isset($node->field_slide_link[0]['title'])) ?  $node->field_slide_link[0]['title'] : '';
+		$image = theme('imagecache', 'slide_img', $node->field_slide_img[0]['filepath']);
+		$embed = $node->field_slide_em[0]['value'];
+	//	dpm($node->field_slide_img[0]['filepath']);
+		$rows[] = array(
+			'title' => $node->title,
+			'desc' => $node->field_slide_des[0]['value'],
+			'link_href' => $link_href,
+			'link_title' => $link_title,
+			'image' => $image,
+			'embed' => $embed,
+			'type' => $type,
+		);
+		$vars['new_rows'] = $rows;
+	}
+}
