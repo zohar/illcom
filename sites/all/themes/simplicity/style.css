@@ -174,7 +174,7 @@ h3 {
   list-style-type: none
 }
 #sidebar_right a {
-  display: block; color: #666666; text-decoration: none; font-size: 100%; font-family: georgia, "times new roman", times, serif; font-weight: bold; padding: 3px;
+  color: #666666; text-decoration: none; font-size: 100%; font-family: georgia, "times new roman", times, serif; padding: 3px;
 }
 #sidebar_right a:hover {
   background: #bfbfbf; color: #fff;
